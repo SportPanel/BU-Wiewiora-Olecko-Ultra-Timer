@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Zegar Backyard</title>
+  <style>
+    html, body {
+  height: 100vh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* zapobiega pionowemu scrollowaniu */
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  background: #0a0a23;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+#container {
+  padding: clamp(10px, 3vw, 20px) clamp(15px, 5vw, 40px);
+  width: 90vw;
+  max-width: 1200px;
+  box-sizing: border-box;
+  text-align: center;
+  color: white;
+  background: #0a0a23;
+  position: relative;
+  z-index: 1;
+}
+
+#time, #loop {
+  font-size: clamp(5rem, 10vw, 12rem); /* większa czcionka */
+  margin: 5px 0;
+  white-space: nowrap;
+}
+
+#status {
+  font-size: clamp(2rem, 4vw, 4rem);
+  margin-bottom: 5px;
+}
+#progressBarContainer {
+  background-color: #333;
+  border-radius: 10px;
+  height: 30px; /* trochę wyższy pasek */
+  overflow: hidden;
+}
+#progressBar {
+  height: 100%;
+  background-color: #ffcc00;
+  width: 0%;
+  transition: width 1s;
+}
+
+    @keyframes pulse {
+      0% { opacity: 1; }
+      50% { opacity: 0.4; }
+      100% { opacity: 1; }
+    }
+    .pulsing {
+      animation: pulse 1s infinite;
+    }
+    #quote {
+  font-size: clamp(1.5rem, 2.5vw, 3rem);
+  margin-top: 15px;
+  color: #dddddd;
+  white-space: normal;
+  overflow-wrap: break-word;
+  max-width: 100%;
+}
+#countdownOverlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-color: rgba(0, 0, 0, 0.85);
+  color: white;
+  font-size: clamp(10rem, 24vw, 30rem); /* zmiana TU */
+  font-weight: bold;
+  display: none;
+  justify-content: center;
+  align-items: center;
+  z-index: 9999;
+  text-shadow: 0 0 30px red;
+  animation: fadeIn 1s ease;
+}
+
+    @keyframes fadeIn {
+      0% { opacity: 0; transform: scale(0.5); }
+      50% { opacity: 1; transform: scale(1.2); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    .separator {
+      border: none;
+      height: 5px;
+      background: rgba(255, 255, 255, 0.2);
+      margin: 0.5rem 0;
+    }
+#licenseNotice {
+  position: fixed;
+  bottom: 15px;
+  left: 0;
+  width: 100%;
+  font-size: 12px;
+  text-align: center;
+  color: #888;
+  z-index: 999;
+}
+#licenseNotice a {
+  color: #888;
+  text-decoration: none;
+}
+#licenseNotice a:hover {
+  text-decoration: underline;
+}
+
+  </style>
+</head>
+<body>
+  <div id="container">
+    <div id="status">Ładowanie zegara...</div>
+    <div id="time"></div>
+    <div id="loop"></div>
+    <div id="progressBarContainer">
+      <div id="progressBar"></div>
+    </div>
+    <div id="runnersInfo" style="font-size:clamp(1rem, 2.5vw, 3rem); margin-top:10px;"></div>
+    <hr class="separator my-2">
+    <div id="quote" style="font-size:clamp(1rem, 2.5vw, 2.5rem); margin-top:15px; color: white;"></div>
+<div id="distance" style="position: fixed; bottom: 20px; right: 20px; font-size: 0.9em; color: #fff; background: rgba(0,0,0,0.5); padding: 6px 10px; border-radius: 8px; z-index: 999;">
+  Dystans: 0.00 km
+</div>
+
+  </div>
+  <div id="countdownOverlay"></div>
+
+  <script>
+    const customStartDate = "2025-07-26T08:00:00";
+    const status = document.getElementById("status");
+    const timeDisplay = document.getElementById("time");
+    const loopDisplay = document.getElementById("loop");
+    const runnersInfo = document.getElementById("runnersInfo");
+    const startDate = new Date(customStartDate);
+    let clockRunning = true;
+
+async function getRunnersStatus() {
+  const sheetUrl = "https://docs.google.com/spreadsheets/d/e/2PACX-1vSxKXhg7VChDZffzsmOhR1-vdTRw_XXG6qdesTn4IfkoP8eEkRZGhAk43PxX8pBEmbFvLiKRbL2qBom/pub?output=csv";
+
+  try {
+    const response = await fetch(sheetUrl);
+    const text = await response.text();
+    const rows = text.trim().split("\n");
+    
+    const headers = rows[0].split(",").map(h => h.trim().toLowerCase());
+    const statusColIndex = headers.findIndex(h => h === "status");
+
+    if (statusColIndex === -1) {
+      runnersInfo.textContent = "Nie znaleziono kolumny 'Status'";
+      return;
+    }
+
+const statuses = rows.slice(1).map(r => {
+  const cols = r.split(",");
+  return {
+    name: cols[headers.findIndex(h => h === "zawodnik")],
+    status: cols[statusColIndex]?.trim().toUpperCase()
+  };
+}).filter(r => r.name && r.status); // tylko wiersze z imieniem i statusem
+
+const total = statuses.length;
+const onTrack = statuses.filter(r => r.status === "RUN").length;
+
+
+    if (onTrack === 0) {
+      clockRunning = false;
+      runnersInfo.style.display = "none";
+    } else {
+      clockRunning = true;
+      const now = new Date();
+      if (now >= startDate) {
+        runnersInfo.textContent = `Na trasie: ${onTrack} z ${total} zawodników`;
+        runnersInfo.style.display = "";
+      } else {
+        runnersInfo.style.display = "none";
+      }
+    }
+  } catch (e) {
+    runnersInfo.textContent = "Błąd pobierania danych z arkusza";
+  }
+}
+
+    const quotes = [
+      "Oddech, krok, pętla – tylko to się teraz liczy.",
+      "Nigdy, nigdy, nigdy, nigdy się nie poddawaj. ~ Winston Churchill",
+      "Kiedy myślisz, że już nie możesz – zrób jeszcze jedno okrążenie.",
+      "Cierpienie minie. Żal z rezygnacji zostaje.",
+      "Twój limit jest dalej niż myślisz.",
+      "Walcz, bo nikt inny tego za ciebie nie zrobi.",
+      "Ból jest stanem przejściowym. Duma pozostaje na zawsze.",
+      "Krew, pot i respekt. Pierwsze dwa dajesz. Ostatnie zdobywasz.",
+      "Wygrywają ci, którzy się nie zatrzymali.",
+      "No pain, no gain.",
+      "Don't think. Run!",
+      "Ciężko? Tym większy szacun.",
+      "Nie ma limitu. Są tylko wymówki.",
+      "Dopóki walczysz, jesteś zwycięzcą. ~ św.Augustyn",
+      "Jeśli przechodzisz przez piekło – nie zatrzymuj się. ~ Winston Churchill",
+      "Lepiej zużywać się niż rdzewieć. ~ Denis Diderot",
+      "Im trudniej, tym większy triumf.",
+      "Zwycięzcy to ci, którzy nie przestali.",
+      "Pętla boli? To znaczy, że żyjesz naprawdę.",
+      "Nie jesteś zrobiony z cukru. Ruszaj.",
+      "Go big or go home. / Albo grubo, albo wcale.",
+      "Push your limits. / Przekraczaj swoje granice.",
+      "Keep calm and carry on. / Spokojnie i do przodu.",
+      "Never give up. / Nigdy się nie poddawaj.",
+      "What doesn't kill you makes you stronger. / Co cię nie zabije, to cię wzmocni.",
+      "Your only limit is you. / Twoim jedynym ograniczeniem jesteś ty.",
+      "Believe you can and you're halfway there. / Uwierz, że możesz, a już jesteś w połowie drogi.",
+      "Be stronger than your excuses. / Bądź silniejszy niż twoje wymówki.",
+      "Silni nie szukają wymówek. Szukają pętli.",
+      "Nie musisz wygrać z innymi. Wystarczy, że nie przegrasz z sobą.",
+    ];
+
+    function showRandomQuote() {
+      const quote = quotes[Math.floor(Math.random() * quotes.length)];
+      document.getElementById("quote").textContent = quote;
+    }
+
+    function updateClock() {
+      const now = new Date();
+      if (!clockRunning) {
+        status.textContent = "Bieg zakończony";
+        timeDisplay.style.display = "";
+        loopDisplay.style.display = "";
+        document.getElementById("progressBarContainer").style.display = "none";
+        document.getElementById("quote").style.display = "none";
+        runnersInfo.style.display = "none";
+        return;
+      }
+
+      if (now < startDate) {
+        const diff = startDate - now;
+        const days = Math.floor(diff / (24 * 3600000));
+        const hours = Math.floor((diff % (24 * 3600000)) / 3600000);
+        const minutes = Math.floor((diff % 3600000) / 60000);
+        const seconds = Math.floor((diff % 60000) / 1000);
+
+        status.textContent = "Do startu:";
+        timeDisplay.textContent = `${days}d ${String(hours).padStart(2,'0')}:${String(minutes).padStart(2,'0')}:${String(seconds).padStart(2,'0')}`;
+        loopDisplay.textContent = "";
+
+        document.getElementById("progressBarContainer").style.display = "none";
+        document.getElementById("quote").style.display = "none";
+        runnersInfo.style.display = "none";
+
+      } else {
+        const diff = now - startDate;
+        const hours = Math.floor(diff / 3600000);
+        const minutes = String(Math.floor((diff % 3600000) / 60000)).padStart(2, '0');
+        const seconds = String(Math.floor((diff % 60000) / 1000)).padStart(2, '0');
+        const minutesNum = parseInt(minutes, 10);
+        const secondsNum = parseInt(seconds, 10);
+
+        status.textContent = "Czas biegu:";
+        timeDisplay.textContent = `${hours}:${minutes}:${seconds}`;
+        loopDisplay.textContent = `Pętla: ${hours + 1}`;
+
+        const progressBar = document.getElementById("progressBar");
+        const progress = (minutesNum * 60 + secondsNum) / 3600 * 100;
+        progressBar.style.width = `${progress}%`;
+
+// Dystans liczony na podstawie godzin:
+const totalMinutes = Math.floor(diff / 60000);
+const completedLoops = Math.floor(totalMinutes / 60);
+const minutesInCurrentLoop = totalMinutes % 60;
+
+let loopCount;
+if (minutesInCurrentLoop < 30) {
+  loopCount = completedLoops;
+} else {
+  loopCount = completedLoops + 1;
+}
+
+loopDisplay.textContent = `Pętla: ${loopCount}`;
+const distanceKm = (loopCount * 6.706).toFixed(2);
+document.getElementById("distance").textContent = `Dystans: ${distanceKm} km`;
+
+document.getElementById("distance").style.display = "block";
+
+        if (minutesNum >= 59) {
+          progressBar.style.backgroundColor = "#cc0000";
+        } else if (minutesNum >= 58) {
+          progressBar.style.backgroundColor = "#ff3300";
+        } else if (minutesNum >= 57) {
+          progressBar.style.backgroundColor = "#ff6600";
+        } else {
+          progressBar.style.backgroundColor = "#ffcc00";
+        }
+// Migotanie na ostatnie 30 sek
+if (minutesNum === 59 && parseInt(seconds, 10) >= 30) {
+  progressBar.classList.add("pulsing");
+} else {
+  progressBar.classList.remove("pulsing");
+}
+
+        // Startowe odliczanie
+        const overlay = document.getElementById("countdownOverlay");
+        if ((minutesNum === 59 && secondsNum >= 50) || (minutesNum === 0 && secondsNum === 0)) {
+          const countdown = (minutesNum === 0 && secondsNum === 0) ? 0 : 60 - secondsNum;
+          if (countdown <= 10) {
+            overlay.style.display = "flex";
+            overlay.textContent = (countdown === 0) ? "START!" : countdown;
+            overlay.classList.add("fadeIn");
+            setTimeout(() => overlay.classList.remove("fadeIn"), 2000);
+          }
+        } else {
+          overlay.style.display = "none";
+        }
+      }
+    }
+
+    getRunnersStatus();
+    showRandomQuote();
+    updateClock();
+    setInterval(updateClock, 1000);
+    setInterval(getRunnersStatus, 60000);
+    setInterval(showRandomQuote, 300000);
+  </script>
+<!-- Przycisk pełnego ekranu -->
+<button id="fullscreenBtn" title="Pełny ekran" style="
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  background: none;
+  border: none;
+  cursor: pointer;
+  z-index: 9999;
+  color: white;
+  font-size: 1.8em;
+">
+  ⛶
+</button>
+
+<script>
+  const fullscreenBtn = document.getElementById('fullscreenBtn');
+
+  fullscreenBtn.addEventListener('click', () => {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen().catch((err) => {
+        alert(`Błąd pełnego ekranu: ${err.message}`);
+      });
+    } else {
+      document.exitFullscreen();
+    }
+  });
+
+  document.addEventListener('fullscreenchange', () => {
+    if (document.fullscreenElement) {
+      fullscreenBtn.textContent = '🞬'; // Ikona wyjścia z pełnego ekranu
+    } else {
+      fullscreenBtn.textContent = '⛶'; // Ikona wejścia w pełny ekran
+    }
+  });
+</script>
+<div id="licenseNotice" style="font-size: 12px; text-align: center; margin-top: 20px; color: #888;">
+  <a href="https://creativecommons.org/licenses/by-nc-nd/4.0/" target="_blank">
+    CC BY-NC-ND 4.0
+  </a> | 
+  <a href="https://sites.google.com/view/projectultra/contact" target="_blank">
+    © 2025 Ja'Rule | Kontakt
+  </a>
+</div>
+</body>
+</html>
